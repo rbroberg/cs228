@@ -1,16 +1,49 @@
-function submit(partId)
+function submit(partId, webSubmit)
 %SUBMIT Submit your code and output to the pgm-class servers
 %   SUBMIT() will connect to the pgm-class server and submit your solution
 %   There is no penalty for submitting, so go ahead and try this!
+%
+%   If this function does not work for you, use the web-submission mechanism.
+%   Call the submitWeb function, which will produce a file for the part you
+%   wish to submit. Then, submit the file to the class servers using the 
+%   "Web Submission" button on the Programming Assignments page on the course
+%   website.
+%   
+%   webSubmit is a boolean variable that specifies whether to prepare
+%   a file for web-submission (if webSubmit = 1) or to submit directly
+%   to the server (if webSubmit = 0, or is not specified); you should call
+%   submitWeb if you want to do a web-submission.
+%
+% Copyright (C) Daphne Koller, Stanford University, 2012
+ warning off all;
+ fprintf('======================================================\n');
+ fprintf('                 Honor Code Statement:\n');
+ fprintf('------------------------------------------------------\n');
+ fprintf('The Honor Code is an undertaking of the students,\n');
+ fprintf('individually and collectively, that they will not\n');
+ fprintf('give or receive unpermitted aid in class work and\n');
+ fprintf('will do their share and take an active part in seeing\n');
+ fprintf('to it that others as well as themselves uphold the\n');
+ fprintf('spirit and letter of the Honor Code.\n\n');
+ fprintf('Sharing, collaboration, or looking at any code related\n');
+ fprintf('to Programming Assignments that is not your own is\n');
+ fprintf('considered a violation of the Honor Code.\n');
+ fprintf('------------------------------------------------------\n');
+ fprintf('By submitting the Programming Assignment, I\n');
+ fprintf('acknowledge and accept the Honor Code.\n');
+ fprintf('======================================================\n\n');
+ 
+ fprintf('==\n== [pgm-class] Submitting Solutions | Programming Assignment %s\n==\n', ...
+	  homework_id());
 
-  warning off all;
-
-  fprintf('==\n== [pgm-class] Submitting Solutions | Programming Assignment %s\n==\n', ...
-          homework_id());
   if ~exist('partId', 'var') || isempty(partId)
     partId = promptPart();
   end
   
+  if ~exist('webSubmit', 'var') || isempty(webSubmit)
+    webSubmit = 0; % submit directly by default 
+  end
+
   % Check valid partId
   partNames = validParts();
   if ~isValidPartId(partId)
@@ -19,15 +52,16 @@ function submit(partId)
     fprintf('!! Submission Cancelled\n');
     return
   end
-  
-  if ~exist('228_login_data.mat','file')
+
+  if ~exist('pgm_login_data.mat','file')
     [login password] = loginPrompt();
-    save('228_login_data.mat','login','password');
+    save('pgm_login_data.mat','login','password');
   else  
-    load('228_login_data.mat');
+    load('pgm_login_data.mat');
     [login password] = quickLogin(login,password);
-    save('228_login_data.mat','login','password');
+    save('pgm_login_data.mat','login','password');
   end
+  
   if isempty(login)
     fprintf('!! Submission Cancelled\n');
     return
@@ -49,41 +83,74 @@ function submit(partId)
   for s = 1:numel(submitParts)
     % Submit this part
     partId = submitParts(s);
-    
-    samplePartId = 2 * (partId - 1) + 1;
-    testPartId = samplePartId + 1;
-    
-    for thisPartId = [samplePartId testPartId]
+
+    for thisPartId = subParts(partId)
+      if (~webSubmit) % submit directly to server
+  
         [login, ch, signature, auxstring] = getChallenge(login, thisPartId);
         if isempty(login) || isempty(ch) || isempty(signature)
-            % Some error occured, error string in first return element.
-            fprintf('\n!! Error: %s\n\n', login);
-            return
+          % Some error occured, error string in first return element.
+          fprintf('\n!! Error: %s\n\n', login);
+          return
         end
-        
+
         % Attempt Submission with Challenge
         ch_resp = challengeResponse(login, password, ch);
-        
+
         [result, str] = submitSolution(login, ch_resp, thisPartId, ...
-            output(thisPartId, auxstring), source(partId), signature);
-        
-        if (thisPartId == samplePartId)
-            partName = partNames{partId};
+               output(thisPartId, auxstring), source(partId), signature);
+
+        if (~isTest(thisPartId))
+          partName = partNames{partId};
         else
-            partName = [partNames{partId} ' (test)'];
+          partName = [partNames{partId} ' (test)'];
         end
-        
+
         fprintf('\n== [pgm-class] Submitted Assignment %s - Part %d - %s\n', ...
-            homework_id(), partId, partName);
+          homework_id(), partId, partName);
         fprintf('== %s\n', strtrim(str));
-        
+
         if exist('OCTAVE_VERSION')
-            fflush(stdout);
+          fflush(stdout);
         end
+        
+      else % make web submission files
+        
+        [result] = submitSolutionWeb(login, thisPartId, output(thisPartId), ...
+                            source(partId));
+        result = base64encode(result);
+
+        if (~isTest(thisPartId))
+          partType = 'sample';
+        else
+          partType = 'test';
+        end
+                
+        fprintf('\nSave as submission file [submit_pa%s_part%d_%s.txt (enter to accept default)]:', ...
+          homework_id(), partId, partType);
+        saveAsFile = input('', 's');
+        if (isempty(saveAsFile))
+          saveAsFile = sprintf('submit_pa%s_part%d_%s.txt', homework_id(), partId, partType);
+        end
+
+        fid = fopen(saveAsFile, 'w');
+        if (fid)
+          fwrite(fid, result);
+          fclose(fid);
+          fprintf('\nSaved your solutions to %s.\n\n', saveAsFile);
+          fprintf(['You can now submit your solutions using the ' ...
+             'Web Submission button\non the Assignments page\n']);
+        else
+          fprintf('Unable to save to %s\n\n', saveAsFile);
+          fprintf(['You can create a submission file by saving the \n' ...
+             'following text in a file: (press enter to continue)\n\n']);
+          pause;
+          fprintf(result);
+        end                                  
+        
+      end      
     end
-    
   end
-  
 end
 
 % ================== CONFIGURABLES FOR EACH HOMEWORK ==================
@@ -98,63 +165,47 @@ function [partNames] = validParts()
                 'CheckConvergence', ...
                 'ClusterGraphCalibrate', ...
                 'ComputeApproxMarginalBP', ...
-                'SmartGetNextClusters', ...
                 'BlockLogDistribution',...
                 'GibbsTrans', ...
-                'MCMCInference PART I', ...
-                'ExtractMarginalsFromSamples', ...
+                'MCMCInference PART 1', ...
                 'MHUniformTrans',...
                 'MHSWTrans variant 1', ...
                 'MHSWTrans variant 2', ...
                 'MCMCInference PART 2'
               };
 end
-%{
-function [partNames] = validParts()
-  partNames = { 'ComputeInitialPotentials', ...
-                'GetNextCliques', ...
-                'CliqueTreeCalibrate (Sum Product)', ...
-                'ComputeExactMarginalBP (Sum Product)', ...
-                'FactorMaxMarginalization', ...
-                'CliqueTreeCalibrate (Max Sum)', ...
-                'ComputeExactMarginalBP (Max Sum)', ...
-                'MaxDecoding'
-              };
-end
-%}
+
 function srcs = sources()
   % Separated by part
-  srcs = { { 'NaiveGetNextClusters.m', 'partner.txt' }, ... %1
-           { 'CreateClusterGraph.m', 'partner.txt' }, ... %3
-           { 'CheckConvergence.m', 'partner.txt' }, ... %5
-           { 'ClusterGraphCalibrate.m', 'partner.txt' }, ... %7
-           { 'ComputeApproxMarginalsBP.m', 'partner.txt' }, ... %9
-           { 'SmartGetNextClusters.m', 'partner.txt' }, ... %11
-           { 'BlockLogDistribution.m', 'partner.txt' }, ... %13
-           { 'GibbsTrans.m', 'partner.txt' },... %15
-           { 'MCMCInference.m', 'partner.txt' }, ... %17
-           { 'ExtractMarginalsFromSamples.m', 'partner.txt' }, ... %19
-           { 'MHUniformTrans.m', 'partner.txt' },... %21
-           { 'MHSWTrans.m', 'partner.txt' }, ... %23
-           { 'MHSWTrans.m', 'partner.txt' }, ... %25
-           { 'MCMCInference.m', 'partner.txt' } %27
+  srcs = { { 'NaiveGetNextClusters.m'}, ... %1
+           { 'CreateClusterGraph.m'}, ... %3
+           { 'CheckConvergence.m'}, ... %5
+           { 'ClusterGraphCalibrate.m'}, ... %7
+           { 'ComputeApproxMarginalsBP.m'}, ... %9
+           { 'BlockLogDistribution.m'}, ... %11
+           { 'GibbsTrans.m'},... %13
+           { 'MCMCInference.m'}, ... %15
+           { 'MHUniformTrans.m'},... %17
+           { 'MHSWTrans.m'}, ... %19
+           { 'MHSWTrans.m'}, ... %21
+           { 'MCMCInference.m'} %23
          };
 end
 
-%{
-function srcs = sources()
-  % Separated by part
-  srcs = { { 'ComputeInitialPotentials.m', 'partner.txt' }, ...
-           { 'GetNextCliques.m', 'partner.txt' }, ...
-           { 'CliqueTreeCalibrate.m', 'partner.txt' }, ...
-           { 'ComputeExactMarginalsBP.m', 'partner.txt' }, ...     
-           { 'FactorMaxMarginalization.m', 'partner.txt' }, ...
-           { 'CliqueTreeCalibrate.m', 'partner.txt' }, ...
-           { 'ComputeExactMarginalsBP.m', 'partner.txt' }, ...
-           { 'MaxDecoding.m', 'partner.txt' }
-         };
+% defines the shown part to back-end part mappings 
+function parts = subParts(partId)
+  first = 2 * (partId - 1) + 1;
+  parts = [first, first + 1];
 end
-%}
+
+% specifies which parts are test parts
+function result = isTest(partId)
+  if (mod(partId, 2) == 0)
+      result = true;
+  else
+      result = false;
+  end
+end
 
 function out = output(partId, auxstring)
 if exist('OCTAVE_VERSION')
@@ -187,8 +238,12 @@ elseif partId == 2
 elseif partId == 3
     %CreateClusterGraph
     toyOut = CreateClusterGraph(INPUT.toyFac,[]);
-    %out = SerializeFactorsFgTol(toyOut.clusterList,.001,0);
-    out = SerializeFactorsFg(toyOut.clusterList);
+    if(~isempty(toyOut.clusterList))
+        % out = SerializeFactorsFgTol(toyOut.clusterList,.001,0);
+        out = SerializeFactorsFg(toyOut.clusterList);
+    else
+        out = '';
+    end
     for i = 1:size(toyOut.edges,1)
       out = [out sprintf('\n')];
       for j =1:size(toyOut.edges,2)
@@ -279,34 +334,6 @@ elseif partId == 10
     out;
     
 elseif partId == 11
-    %SmartGetNextClusters
-    [outCG outM] = ClusterGraphCalibrate(INPUT.treeClust,1);
-    out = '';
-    %out = SerializeFactorsFgTol(outCG.clusterList,.05,0);
-    out = SerializeFactorsFg(outCG.clusterList);
-    for i = 1:size(outCG.edges,1)
-      out = [out sprintf('\n')];
-      for j =1:size(outCG.edges,2)
-        out = [out ' ' num2str(outCG.edges(i,j))];
-      end
-    end
-    out;
-    
-elseif partId == 12
-    %SmartGetNextClusters
-    [outCG outM] = ClusterGraphCalibrate(INPUT.treeClustT,1);
-    out = '';
-    %out = SerializeFactorsFgTol(outCG.clusterList,.05,0);
-    out = SerializeFactorsFg(outCG.clusterList);
-    for i = 1:size(outCG.edges,1)
-      out = [out sprintf('\n')];
-      for j =1:size(outCG.edges,2)
-        out = [out ' ' num2str(outCG.edges(i,j))];
-      end
-    end
-    out;
-    
-elseif partId == 13
     %BlockLogDistribution
     randi('seed',1);
     outMAT = BlockLogDistribution([1],INPUT.toyNet,INPUT.toyFac,INPUT.A0);
@@ -318,7 +345,7 @@ elseif partId == 13
       end
     end
 
-elseif partId == 14
+elseif partId == 12
 
     randi('seed',2);
     outMAT = BlockLogDistribution([10],INPUT.toyNet,INPUT.toyFac,INPUT.A0);
@@ -337,7 +364,7 @@ elseif partId == 14
       end
     end
 
-elseif partId == 15
+elseif partId == 13
     %GibbsTrans
     randi('seed',1);
     OUTmat = INPUT.A0;
@@ -353,7 +380,7 @@ elseif partId == 15
     end
     out; 
     
-elseif partId == 16
+elseif partId == 14
     
     randi('seed',2);
     OUTmat = INPUT.A0;
@@ -369,7 +396,7 @@ elseif partId == 16
     end
     out;
     
-elseif partId == 17
+elseif partId == 15
     randi('seed',1);
     %MCMCInference (p1)
     [Gibbs_M, Gibbs_all_samples] = MCMCInference(INPUT.toyNet, INPUT.toyFac, [], ...
@@ -382,7 +409,7 @@ elseif partId == 17
     out = [out SerializeFactorsFg(Gibbs_M)];
     out;
 
-elseif partId == 18
+elseif partId == 16
     randi('seed',1);
     %MCMCInference (p1)
     [Gibbs_M, Gibbs_all_samples] = MCMCInference(INPUT.toyNet2, INPUT.toyFac2, [], ...
@@ -395,20 +422,8 @@ elseif partId == 18
     out = [out SerializeFactorsFg(Gibbs_M)];
     out;
 
-elseif partId == 19
-    %ExtractMarginalsFromSamples
-    M = ExtractMarginalsFromSamples(INPUT.toyNet,INPUT.AA,[1 3 5]);
-    %out = SerializeFactorsFgTol(M,.001,0);
-    out = SerializeFactorsFg(M);
-    out;
-
-elseif partId == 20
-    M = ExtractMarginalsFromSamples(INPUT.toyNet2,INPUT.AA2,[1 3 5]);
-    %out = SerializeFactorsFgTol(M,.001,0);
-    out = SerializeFactorsFg(M);
-    out;
     
-elseif partId == 21
+elseif partId == 17
     %MHUniformTrans
     randi('seed',1);
     OUTmat = INPUT.A0;
@@ -425,7 +440,7 @@ elseif partId == 21
     out;
    
 
-elseif partId == 22
+elseif partId == 18
 
     randi('seed',2);
     OUTmat = INPUT.A0;
@@ -441,7 +456,7 @@ elseif partId == 22
     end
     out;
 
-elseif partId == 23
+elseif partId == 19
     %%%NOTE YOU MUST UPDATE THIS PATH TO THE 'gaimc' FOLDER
     %%%THIS ALLOWS INCLUSION OF THE SCOMPONENTS FUNCTION
     addpath('gaimc');
@@ -462,7 +477,7 @@ elseif partId == 23
     out;
    
 
-elseif partId == 24
+elseif partId == 20
     randi('seed',2);
     OUTmat = INPUT.A0;
     for i = 1:20
@@ -477,7 +492,7 @@ elseif partId == 24
     end
     out;
 
-elseif partId == 25
+elseif partId == 21
     %%%NOTE YOU MUST UPDATE THIS PATH TO THE 'gaimc' FOLDER
     %%%THIS ALLOWS INCLUSION OF THE SCOMPONENTS FUNCTION
     addpath('gaimc');
@@ -496,7 +511,7 @@ elseif partId == 25
     end
     out;
     
-elseif partId == 26
+elseif partId == 22
   
   randi('seed',2);
     OUTmat = INPUT.A0;
@@ -512,7 +527,7 @@ elseif partId == 26
     end
     out;
     
-elseif partId == 27
+elseif partId == 23
     %%%NOTE YOU MUST UPDATE THIS PATH TO THE 'gaimc' FOLDER
     %%%THIS ALLOWS INCLUSION OF THE SCOMPONENTS FUNCTION
     addpath('gaimc');
@@ -534,7 +549,7 @@ elseif partId == 27
     out;
    
 
-elseif partId == 28
+elseif partId == 24
 
     randi('seed',2);
     [MHU_M, MHU_all_samples] = MCMCInference(INPUT.toyNet2, INPUT.toyFac2, [], ...
@@ -861,16 +876,20 @@ end
 
 
 
+function url = site_url()
+  url = 'http://class.coursera.org/pgm-003';
+end
 
-%%% Remove -staging when you deploy!
 function url = challenge_url()
-  url = 'http://stanford.campus-class.org/pgm/assignment/challenge';
+
+  url = [site_url() '/assignment/challenge'];
 end
 
-%%% Remove -staging when you deploy!
 function url = submit_url()
-  url = 'http://stanford.campus-class.org/pgm/assignment/submit';
+  url = [site_url() '/assignment/submit'];
 end
+
+
 
 % ========================= CHALLENGE HELPERS =========================
 
@@ -936,6 +955,15 @@ function [email,ch,signature,auxstring] = getChallenge(email, part)
   auxstring = getfield(r, 'challenge_aux_data');
 end
 
+function [result, str] = submitSolutionWeb(email, part, output, source)
+
+  result = ['{"assignment_part_sid":"' base64encode([homework_id() '-' num2str(part)], '') '",' ...
+            '"email_address":"' base64encode(email, '') '",' ...
+            '"submission":"' base64encode(output, '') '",' ...
+            '"submission_aux":"' base64encode(source, '') '"' ...
+            '}'];
+  str = 'Web-submission';
+end
 
 function [result, str] = submitSolution(email, ch_resp, part, output, ...
                                         source, signature)
@@ -972,14 +1000,13 @@ function [login password] = basicPrompt()
 end
 
 function [login password] = quickLogin(login,password)
-  cont_token = input(['You are currently logged in as ' login '. Is this you? (y/n - type n to reenter password)'],'s');
-  if(cont_token(1)=='Y'||cont_token(1)=='y')
+  cont_token = input(['You are currently logged in as ' login '.\nIs this you? (y/n - type n to reenter password)'],'s');
+  if(isempty(cont_token) || cont_token(1)=='Y'||cont_token(1)=='y')
     return;
   else
     [login password] = loginPrompt();
   end
 end
-
 
 function [str] = challengeResponse(email, passwd, challenge)
   str = sha1([challenge passwd]);
